@@ -1,0 +1,24 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "mailclaw-send",
+	"main": "src/index.ts",
+	"compatibility_date": "2025-07-15",
+	"observability": {
+		"enabled": true
+	},
+	"send_email": [
+		{
+			"name": "SEND_EMAIL",
+			"remote": true
+		}
+	],
+	"vars": {
+		"EMAIL_PROVIDER": "cloudflare",
+		"DEFAULT_FROM": "noreply@ttttt.ai"
+	},
+	"workers_dev": true,
+	"preview_urls": false,
+	"placement": {
+		"mode": "smart"
+	}
+}

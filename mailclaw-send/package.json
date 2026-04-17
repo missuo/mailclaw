@@ -1,0 +1,22 @@
+{
+  "name": "mailclaw-send",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --remote",
+    "deploy": "wrangler deploy --minify",
+    "tail": "wrangler tail",
+    "cf-typegen": "wrangler types --env-interface CloudflareBindings",
+    "tsc": "tsc --noEmit",
+    "check": "biome check ./src",
+    "check:fix": "biome check --write --unsafe ./src"
+  },
+  "dependencies": {
+    "hono": "^4.8.5"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.1.2",
+    "@types/node": "^24.1.0",
+    "typescript": "^5.8.3",
+    "wrangler": "^4.24.4"
+  }
+}
