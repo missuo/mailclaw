@@ -14,7 +14,7 @@
 	],
 	"vars": {
 		"EMAIL_PROVIDER": "cloudflare",
-		"DEFAULT_FROM": "noreply@ttttt.ai"
+		"DEFAULT_FROM": "T5 AI <hello@ttttt.ai>"
 	},
 	"workers_dev": true,
 	"preview_urls": false,

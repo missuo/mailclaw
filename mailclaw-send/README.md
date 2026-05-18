@@ -1,6 +1,6 @@
 # mailclaw-send
 
-Send-only Cloudflare Worker that wraps the Cloudflare Email Service. Defaults the sender to `noreply@ttttt.ai`.
+Send-only Cloudflare Worker that wraps the Cloudflare Email Service. Defaults the sender to `hello@ttttt.ai`.
 
 ## Endpoints
 
@@ -20,7 +20,7 @@ curl -X POST https://mailclaw-send.<subdomain>.workers.dev/api/emails/send \
   }'
 ```
 
-`from` defaults to `DEFAULT_FROM` (`noreply@ttttt.ai`); override it per-request in the body if needed.
+`from` defaults to `DEFAULT_FROM` (`hello@ttttt.ai`); override it per-request in the body if needed.
 
 ## Prerequisites
 
