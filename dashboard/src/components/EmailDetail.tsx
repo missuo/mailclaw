@@ -105,7 +105,7 @@ export function EmailDetail({ ctx, emailId, onBack, onDeleted, onReply }: Props)
 				</div>
 			</div>
 
-			<div className="thin-scroll flex-1 overflow-y-auto">
+			<div className="thin-scroll min-h-0 flex-1 overflow-y-auto">
 				<div className="border-b border-black/5 px-6 py-5">
 					<h1 className="break-words text-xl font-semibold text-black/90">{subject}</h1>
 					<div className="mt-3 flex items-start gap-3">
@@ -146,50 +146,65 @@ function EmailBody({ html, text }: { html: string | null; text: string | null })
 	useEffect(() => {
 		if (!html || !iframeRef.current) return;
 		const iframe = iframeRef.current;
+		// Keep email's native table layout intact; only constrain images and the body
+		// so horizontal scroll never appears. Long unbreakable strings wrap.
 		const doc = `<!doctype html><html><head><meta charset="utf-8"><base target="_blank"><style>
-			html,body{margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:#111;background:#fff;font-size:14px;line-height:1.55;overflow-x:hidden;width:100%;max-width:100%}
-			body{padding:16px 24px;word-wrap:break-word;overflow-wrap:anywhere}
-			body *{max-width:100%!important;box-sizing:border-box}
-			img,video{height:auto!important;object-fit:contain}
-			table{table-layout:auto!important;width:auto!important;max-width:100%!important;border-collapse:collapse}
-			a{color:#1a73e8}
+			html,body{margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:#111;background:#fff;font-size:14px;line-height:1.55}
+			html{overflow-x:hidden}
+			body{padding:16px 24px;overflow-x:hidden;word-wrap:break-word;overflow-wrap:break-word}
+			img,video{max-width:100%;height:auto}
+			a{color:#1a73e8;word-break:break-all}
 			blockquote{margin:8px 0;padding:4px 0 4px 12px;border-left:3px solid #dadce0;color:#5f6368}
 			pre,code{white-space:pre-wrap;word-break:break-word}
 		</style></head><body>${html}</body></html>`;
 		iframe.srcdoc = doc;
 
 		let observer: ResizeObserver | null = null;
+		let cancelled = false;
+		const timers: number[] = [];
+
 		const measure = () => {
-			const doc = iframe.contentDocument;
-			const body = doc?.body;
-			const root = doc?.documentElement;
+			if (cancelled) return;
+			const cdoc = iframe.contentDocument;
+			const body = cdoc?.body;
+			const root = cdoc?.documentElement;
 			if (!body || !root) return;
-			// Use the larger of body / documentElement scroll/offset height to handle
-			// quirks across email HTML; trim a couple px to avoid a spurious scrollbar.
 			const h = Math.max(body.scrollHeight, body.offsetHeight, root.scrollHeight);
-			if (h > 0) setHeight(h);
+			if (h > 0) setHeight((prev) => (h !== prev ? h : prev));
 		};
 
 		const onLoad = () => {
-			measure();
-			const body = iframe.contentDocument?.body;
+			// Measure across a few frames to catch stylesheet / font / image layout.
+			requestAnimationFrame(measure);
+			timers.push(window.setTimeout(measure, 50));
+			timers.push(window.setTimeout(measure, 250));
+			timers.push(window.setTimeout(measure, 1000));
+
+			const cdoc = iframe.contentDocument;
+			const body = cdoc?.body;
 			if (body && "ResizeObserver" in window) {
 				observer = new ResizeObserver(measure);
 				observer.observe(body);
 			}
-			// Late-loading images / fonts can change layout.
-			const imgs = iframe.contentDocument?.images;
+			const imgs = cdoc?.images;
 			if (imgs) {
 				for (const img of Array.from(imgs)) {
-					if (!img.complete) img.addEventListener("load", measure, { once: true });
+					if (!img.complete) {
+						img.addEventListener("load", measure, { once: true });
+						img.addEventListener("error", measure, { once: true });
+					}
 				}
 			}
+			// Web fonts loading later can shift layout too.
+			cdoc?.fonts?.ready?.then(measure).catch(() => {});
 		};
 
 		iframe.addEventListener("load", onLoad);
 		return () => {
+			cancelled = true;
 			iframe.removeEventListener("load", onLoad);
 			observer?.disconnect();
+			for (const t of timers) window.clearTimeout(t);
 		};
 	}, [html]);
 
@@ -200,7 +215,7 @@ function EmailBody({ html, text }: { html: string | null; text: string | null })
 				title="Email content"
 				className="email-html-frame block"
 				sandbox="allow-popups allow-popups-to-escape-sandbox"
-				style={{ height: height || 200, width: "100%" }}
+				style={{ height: height || 400, width: "100%" }}
 			/>
 		);
 	}

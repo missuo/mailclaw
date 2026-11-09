@@ -79,7 +79,7 @@ export default function App() {
 	}
 
 	return (
-		<div className="flex h-screen flex-col bg-[#f6f8fa]">
+		<div className="flex h-screen flex-col overflow-hidden bg-[#f6f8fa]">
 			<header className="flex items-center gap-3 border-b border-black/5 bg-white px-4 py-2.5">
 				<div className="flex items-center gap-2">
 					<img src="/logo.svg" alt="MailClaw" className="h-8 w-8" />
@@ -125,8 +125,8 @@ export default function App() {
 				</div>
 			</header>
 
-			<div className="flex min-h-0 flex-1">
-				<aside className="flex w-[380px] min-w-[320px] flex-col border-r border-black/5">
+			<div className="flex min-h-0 flex-1 overflow-hidden">
+				<aside className="flex w-[380px] min-w-[320px] flex-col overflow-hidden border-r border-black/5">
 					<FiltersBar value={filters} onChange={setFilters} />
 					<InboxList
 						key={refreshKey}
@@ -139,7 +139,7 @@ export default function App() {
 					/>
 				</aside>
 
-				<main className="min-w-0 flex-1">
+				<main className="flex min-w-0 flex-1 flex-col overflow-hidden">
 					{selectedId ? (
 						<EmailDetail
 							ctx={ctx}

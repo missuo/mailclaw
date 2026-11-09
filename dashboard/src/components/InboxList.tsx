@@ -26,7 +26,7 @@ export function InboxList({ data, loading, error, selectedId, onSelect, onPage }
 				</div>
 			) : null}
 
-			<div className="thin-scroll flex-1 overflow-y-auto">
+			<div className="thin-scroll min-h-0 flex-1 overflow-y-auto">
 				{loading && emails.length === 0 ? (
 					<div className="flex h-full items-center justify-center">
 						<Spinner />
