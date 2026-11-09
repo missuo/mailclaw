@@ -1,7 +1,7 @@
 import { createId } from "@paralleldrive/cuid2";
 import { type Context, Hono } from "hono";
-import { generateSummary, generateTranslation } from "@/ai/enrich";
-import { getLLMConfig } from "@/ai/llm";
+import { analyzeEmail, otpSummary, translateEmail } from "@/ai/enrich";
+import { aiEnabled } from "@/ai/workers-ai";
 import * as db from "@/database/d1";
 import { getSettings } from "@/database/settings";
 import { createEmailProvider } from "@/providers";
@@ -182,8 +182,8 @@ async function regenerate(
 	c: Context<{ Bindings: CloudflareBindings }>,
 	kind: "summary" | "translation",
 ) {
-	if (!getLLMConfig(c.env)) {
-		return c.json(ERR("AI_NOT_CONFIGURED", "Server-side AI is not configured"), 501);
+	if (!aiEnabled(c.env)) {
+		return c.json(ERR("AI_NOT_CONFIGURED", "Workers AI binding is not configured"), 501);
 	}
 
 	const emailId = c.req.param("id") ?? "";
@@ -199,13 +199,15 @@ async function regenerate(
 
 	try {
 		if (kind === "summary") {
-			const summary = await generateSummary(c.env, email, language);
+			const analysis = await analyzeEmail(c.env, email, { summaryLanguage: language });
+			const otp = settings.otp_detection ? analysis.otp : null;
+			const summary = otp ? otpSummary(analysis.service, otp) : analysis.summary;
 			if (!summary) return c.json(ERR("AI_FAILED", "No summary produced"), 502);
-			await db.updateSummary(c.env.D1, emailId, summary, language);
-			return c.json(OK({ summary, summary_lang: language }));
+			await db.updateAnalysis(c.env.D1, emailId, { summary, summary_lang: language, otp });
+			return c.json(OK({ summary, summary_lang: language, otp }));
 		}
 
-		const translation = await generateTranslation(c.env, email, language);
+		const translation = await translateEmail(c.env, email, language);
 		if (!translation) return c.json(ERR("AI_FAILED", "No translation produced"), 502);
 		await db.updateTranslation(c.env.D1, emailId, translation, language);
 		return c.json(OK({ translation, translation_lang: language }));
@@ -300,6 +302,7 @@ emails.post("/api/emails/send", async (c) => {
 			summary_lang: null,
 			translation: null,
 			translation_lang: null,
+			otp: null,
 		});
 		if (!success) throw error ?? new Error("insert failed");
 

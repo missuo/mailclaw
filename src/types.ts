@@ -24,6 +24,8 @@ export interface Email {
 	summary_lang: string | null;
 	translation: string | null;
 	translation_lang: string | null;
+	// One-time code extracted by AI at ingest (null when none).
+	otp: string | null;
 	// Populated only on the single-email detail endpoint.
 	attachments?: AttachmentSummary[];
 }

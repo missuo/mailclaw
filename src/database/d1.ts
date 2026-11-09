@@ -7,12 +7,13 @@ import type {
 	EmailPatch,
 	EmailSummary,
 } from "@/types";
+import { now } from "@/utils/helpers";
 
 const EMAIL_COLUMNS =
-	"id, from_address, to_address, subject, received_at, html_content, text_content, has_attachments, attachment_count, direction, message_id, in_reply_to, references_header, read, starred, archived, deleted_at, updated_at, summary, summary_lang, translation, translation_lang";
+	"id, from_address, to_address, subject, received_at, html_content, text_content, has_attachments, attachment_count, direction, message_id, in_reply_to, references_header, read, starred, archived, deleted_at, updated_at, summary, summary_lang, translation, translation_lang, otp";
 
 const SUMMARY_COLUMNS =
-	"id, from_address, to_address, subject, received_at, has_attachments, attachment_count, direction, message_id, in_reply_to, references_header, read, starred, archived, deleted_at, updated_at, summary, summary_lang, translation, translation_lang";
+	"id, from_address, to_address, subject, received_at, has_attachments, attachment_count, direction, message_id, in_reply_to, references_header, read, starred, archived, deleted_at, updated_at, summary, summary_lang, translation, translation_lang, otp";
 
 function mapEmailRow<T extends Record<string, unknown>>(row: T) {
 	return {
@@ -242,14 +243,20 @@ export async function patchEmail(db: D1Database, id: string, patch: EmailPatch, 
 	}
 }
 
-// AI enrichment writes. These deliberately do NOT bump updated_at: a summary
-// arriving must not re-order the delta-sync cursor stream. Clients pick the
-// text up on their next fetch of the row.
-export async function updateSummary(db: D1Database, id: string, summary: string, language: string) {
+// AI enrichment writes. They bump updated_at so delta-sync clients pick the
+// result up on their next sync even if they already fetched the row before
+// enrichment finished.
+export async function updateAnalysis(
+	db: D1Database,
+	id: string,
+	analysis: { summary: string | null; summary_lang: string | null; otp: string | null },
+) {
 	try {
 		await db
-			.prepare("UPDATE emails SET summary = ?, summary_lang = ? WHERE id = ?")
-			.bind(summary, language, id)
+			.prepare(
+				"UPDATE emails SET summary = ?, summary_lang = ?, otp = ?, updated_at = ? WHERE id = ?",
+			)
+			.bind(analysis.summary, analysis.summary_lang, analysis.otp, now(), id)
 			.run();
 		return { success: true, error: undefined };
 	} catch (e: unknown) {
@@ -265,8 +272,10 @@ export async function updateTranslation(
 ) {
 	try {
 		await db
-			.prepare("UPDATE emails SET translation = ?, translation_lang = ? WHERE id = ?")
-			.bind(translation, language, id)
+			.prepare(
+				"UPDATE emails SET translation = ?, translation_lang = ?, updated_at = ? WHERE id = ?",
+			)
+			.bind(translation, language, now(), id)
 			.run();
 		return { success: true, error: undefined };
 	} catch (e: unknown) {

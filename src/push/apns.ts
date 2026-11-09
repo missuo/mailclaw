@@ -82,6 +82,9 @@ export interface PushableEmail {
 	from_address: string;
 	to_address: string;
 	subject: string | null;
+	// AI analysis, when it finished before the push went out.
+	otp?: string | null;
+	summary?: string | null;
 }
 
 // Pushes a new-mail alert to every registered device. No-op unless the
@@ -100,7 +103,8 @@ export async function pushNewEmail(env: CloudflareBindings, email: PushableEmail
 			aps: {
 				alert: {
 					title: email.from_address,
-					body: email.subject || "(no subject)",
+					// A one-time code leads the notification ("Craftail OTP: 123456").
+					body: email.otp && email.summary ? email.summary : email.subject || "(no subject)",
 				},
 				sound: "default",
 				"mutable-content": 1,
@@ -110,6 +114,7 @@ export async function pushNewEmail(env: CloudflareBindings, email: PushableEmail
 			from: email.from_address,
 			to: email.to_address,
 			subject: email.subject,
+			otp: email.otp ?? null,
 		});
 
 		await Promise.allSettled(

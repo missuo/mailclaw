@@ -15,6 +15,7 @@
     "db:indexes": "wrangler d1 execute mailclaw-d1 --file ./sql/indexes.sql --remote",
     "db:upgrade": "wrangler d1 execute mailclaw-d1 --file ./sql/upgrade-v2.sql --remote",
     "db:upgrade-v3": "wrangler d1 execute mailclaw-d1 --file ./sql/upgrade-v3.sql --remote",
+    "db:upgrade-v4": "wrangler d1 execute mailclaw-d1 --file ./sql/upgrade-v4.sql --remote",
     "lint": "biome lint ./src",
     "lint:fix": "biome lint --write --unsafe ./src",
     "format": "biome format --write ./src",

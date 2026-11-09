@@ -26,13 +26,13 @@ Current server version: **2.1.0**.
 		"capabilities": [
 			"read-state", "threads", "sent-storage", "soft-delete",
 			"delta-sync", "send-attachments", "devices", "settings",
-			"push", "server-ai"
+			"push", "server-ai", "otp", "server-compose", "filter-rules"
 		]
 	}
 }
 ```
 
-`push` is present only when the server has its APNs secrets configured. Servers older than 2.0.0 return neither `version` nor `capabilities` — clients must treat both as absent and fall back to the 1.x feature set (list/export/get/delete/send/attachments only).
+`push` is present only when the server has its APNs secrets configured. `server-ai`, `otp` and `server-compose` are present only when the Workers AI binding is configured. Servers older than 2.0.0 return neither `version` nor `capabilities` — clients must treat both as absent and fall back to the 1.x feature set (list/export/get/delete/send/attachments only).
 
 ## Email object
 
@@ -60,6 +60,7 @@ Current server version: **2.1.0**.
 	"summary_lang": "简体中文",
 	"translation": "…",
 	"translation_lang": "简体中文",
+	"otp": null,
 	"attachments": [ { "id", "email_id", "filename", "mime_type", "size", "created_at" } ]
 }
 ```
@@ -68,7 +69,8 @@ Current server version: **2.1.0**.
 - `direction` is `inbound` (received) or `outbound` (sent via the API and persisted).
 - `message_id` / `in_reply_to` / `references_header` are the RFC 5322 threading headers; for outbound rows `message_id` holds the provider's message id. Clients build conversation threads by chaining these.
 - `deleted_at` non-null means the email is in Trash.
-- `summary` / `translation` (capability `server-ai`) are generated on the server when the email arrives, using the languages from `/api/settings`. They are `null` until enrichment finishes (a few seconds after receipt) and stay `null` on servers without AI configured — clients should treat them as optional. Writing them does **not** bump `updated_at`, so they never disturb the delta-sync cursor; clients pick them up on the next fetch of the row.
+- `summary` / `translation` (capability `server-ai`) are generated on the server by Workers AI when the email arrives, using the languages from `/api/settings`. They are `null` until enrichment finishes (summary ~2–3 s after receipt, translation later) and stay `null` on servers without AI, or for emails hidden by the app's filter rules — clients should treat them as optional. `translation` is `"SKIP"` when the email is already in the target language. Writing them bumps `updated_at`, so delta-sync clients pick them up on their next sync.
+- `otp` (capability `otp`) is the one-time code (verification / sign-in / 2FA) the AI found in the email, copied exactly (letters and case preserved, spaces removed), or `null`. When present, `summary` is `"<Service> OTP: <code>"` (e.g. `"ChatGPT OTP: 770496"`).
 
 ## GET /api/emails · GET /api/emails/export
 
@@ -151,7 +153,7 @@ If persisting the Sent copy fails, the send still succeeds and `email_id` is abs
 
 ## GET /api/settings · PUT /api/settings
 
-Capability: `settings`. User preferences that drive server-side enrichment, shared by every client:
+Capability: `settings`. Every non-secret app preference lives here so a new device inherits it (API tokens never do):
 
 ```json
 {
@@ -159,30 +161,62 @@ Capability: `settings`. User preferences that drive server-side enrichment, shar
 	"translation_language": "简体中文",
 	"primary_language": "简体中文",
 	"auto_summarize": true,
-	"auto_translate": false
+	"auto_translate": false,
+	"otp_detection": true,
+	"show_translation": true,
+	"signature": "",
+	"compose_rules": "",
+	"templates": [{ "name": "…", "to": "…", "subject": "…", "body": "…" }],
+	"identities": [{ "display_name": "Vincent Yang", "address": "me@uid.si" }],
+	"default_identity": "me@uid.si",
+	"filter_rules": [{ "mode": "exclude", "field": "from", "pattern": "maggie@uid.si" }]
 }
 ```
 
-`PUT` accepts any subset and returns the merged result. Unknown keys are ignored.
+`PUT` accepts any subset and returns the merged result. Unknown keys are ignored (so newer clients can talk to older servers); a known key with an invalid value is `400 INVALID_SETTINGS`. `templates` and `identities` items may carry extra client-defined fields.
+
+### Filter rules (capability `filter-rules`)
+
+`filter_rules` are **app-only** Include/Exclude rules. They never filter the REST API or the web dashboard. Each rule matches `from_address` or `to_address` (`field`) against `pattern`, case-insensitively:
+
+- `user@example.com` — that exact address;
+- `@example.com` or `example.com` — that domain and its subdomains (`bounce@mail.example.com`).
+
+An inbound email is **hidden in the app** when any `exclude` rule matches it, or when at least one `include` rule exists and none matches. Clients hide such emails locally using exactly this logic (so rule changes apply to existing mail immediately). On the server, an email that is hidden at arrival gets no AI enrichment and no push. If a rule change later reveals it, clients can fill in the summary with `POST /api/emails/:id/summarize`.
 
 ## POST /api/emails/:id/summarize · POST /api/emails/:id/translate
 
-Capability: `server-ai`. Regenerates the summary or translation for one email — used after a language change or when the user asks for a redo. Optional body `{"language": "日本語"}` overrides the stored preference for this call (and is what gets persisted with the result).
+Capability: `server-ai`. Regenerates the summary or translation for one email — after a language change, when the user asks for a redo, or for an email that was hidden by a filter rule when it arrived. Optional body `{"language": "日本語"}` overrides the stored preference for this call (and is what gets persisted with the result).
 
-Returns `{"summary", "summary_lang"}` or `{"translation", "translation_lang"}`. `501 AI_NOT_CONFIGURED` when the server has no LLM configured; `502 AI_FAILED` when the provider call fails.
+Returns `{"summary", "summary_lang", "otp"}` or `{"translation", "translation_lang"}`. `501 AI_NOT_CONFIGURED` without the Workers AI binding; `502 AI_FAILED` when the model call fails.
+
+## POST /api/ai/complete
+
+Capability: `server-compose`. A generic completion for client-side AI features (drafting, polishing, tone changes, subject suggestions). Clients own the prompts; the server owns the model, so no client needs an LLM key.
+
+```json
+{
+	"system": "optional system prompt",
+	"messages": [{ "role": "user", "content": "…" }, { "role": "assistant", "content": "…" }],
+	"stream": true,
+	"max_tokens": 4096
+}
+```
+
+- `stream: false` (default) → `{"success": true, "data": {"text": "…"}}`.
+- `stream: true` → `text/event-stream` of `data: {"delta":"…"}` frames, ending with `data: [DONE]`.
 
 ### Server-side AI configuration
 
-Enrichment runs when all three secrets are set (`LLM_PROTOCOL` defaults to `chat`):
+AI runs on [Workers AI](https://developers.cloudflare.com/workers-ai/) through the `ai` binding in `wrangler.jsonc` — no API keys; usage is billed to the Cloudflare account that owns the Worker. Default models:
 
-```sh
-wrangler secret put LLM_BASE_URL   # e.g. https://api.openai.com/v1
-wrangler secret put LLM_API_KEY
-wrangler secret put LLM_MODEL      # e.g. gpt-5
-wrangler secret put LLM_PROTOCOL   # chat | responses | messages
-```
+| Task | Default model | Override var |
+|---|---|---|
+| Summary + OTP (gates the push) | `@cf/google/gemma-4-26b-a4b-it` | `AI_ANALYSIS_MODEL` |
+| Translation | `@cf/deepseek-ai/deepseek-v4.1-flash-1017` | `AI_TRANSLATION_MODEL` |
+| `/api/ai/complete` | `@cf/deepseek-ai/deepseek-v4.1-flash-1017` | `AI_COMPOSE_MODEL` |
 
-The key lives in the operator's own Cloudflare account — for a self-hosted deployment that is the same trust boundary as the mailbox itself. Without these secrets the server simply omits `server-ai` and clients fall back to generating on-device with their own key.
+Override with plain `vars` in `wrangler.jsonc` when Cloudflare retires a model. Translation sends only the email's text to the model (markup, CSS and links are kept verbatim and restored afterwards), capped at 40,000 characters per email.
 
 ## POST /api/devices
 
@@ -205,27 +239,33 @@ Capability: `push`. When configured (secrets `APNS_KEY`, `APNS_KEY_ID`, `APNS_TE
 ```json
 {
 	"aps": {
-		"alert": { "title": "<from_address>", "body": "<subject>" },
+		"alert": { "title": "<from_address>", "body": "<subject, or \"<Service> OTP: <code>\">" },
 		"sound": "default",
 		"mutable-content": 1,
 		"thread-id": "<from_address>"
 	},
 	"email_id": "cuid",
-	"from": "…", "to": "…", "subject": "…"
+	"from": "…", "to": "…", "subject": "…",
+	"otp": "770496"
 }
 ```
+
+The push waits up to 8 s for AI analysis so a one-time code can lead the notification (`otp` is `null` when there is none or analysis timed out). Emails hidden by the app's filter rules are not pushed.
 
 Clients deep-link `email_id` to the message (fetch via `GET /api/emails/:id` if not yet synced). Stale tokens (APNs 410 / `BadDeviceToken` / `Unregistered`) are removed automatically.
 
 ## Error codes
 
-`NOT_FOUND`, `INVALID_BODY`, `MISSING_FIELDS`, `MISSING_CONTENT`, `INVALID_FIELD`, `INVALID_ATTACHMENT`, `CONTENT_TOO_LARGE`, `SEND_FAILED`, `D1_ERROR`, `INTERNAL_ERROR`, plus `UNAUTHORIZED` (401) from auth. HTTP status mirrors the class of error (400/401/404/500).
+`NOT_FOUND`, `INVALID_BODY`, `INVALID_SETTINGS`, `AI_NOT_CONFIGURED`, `AI_FAILED`, `MISSING_FIELDS`, `MISSING_CONTENT`, `INVALID_FIELD`, `INVALID_ATTACHMENT`, `CONTENT_TOO_LARGE`, `SEND_FAILED`, `D1_ERROR`, `INTERNAL_ERROR`, plus `UNAUTHORIZED` (401) from auth. HTTP status mirrors the class of error (400/401/404/500).
 
-## Upgrading a 1.x deployment
+## Upgrading an older deployment
+
+Run only the migrations newer than your current version (2.0.x → from v3, 2.1.x → v4 only):
 
 ```sh
 bun run db:upgrade      # one-time: sql/upgrade-v2.sql (ALTERs + devices table)
 bun run db:upgrade-v3   # one-time: sql/upgrade-v3.sql (AI columns + settings table)
+bun run db:upgrade-v4   # one-time: sql/upgrade-v4.sql (otp column)
 bun run db:indexes      # idempotent: new indexes
 bun run deploy
 ```

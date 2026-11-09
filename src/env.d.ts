@@ -12,10 +12,10 @@ interface CloudflareBindings {
 	APNS_KEY_ID?: string;
 	APNS_TEAM_ID?: string;
 	APNS_TOPIC?: string; // the app's bundle id
-	// Server-side AI enrichment (summary + translation at ingest).
-	// Enrichment is skipped unless BASE_URL, API_KEY and MODEL are all set.
-	LLM_BASE_URL?: string;
-	LLM_API_KEY?: string;
-	LLM_MODEL?: string;
-	LLM_PROTOCOL?: string; // "chat" | "responses" | "messages" — defaults to "chat"
+	// Workers AI (wrangler.jsonc `ai` binding). AI features are off without it.
+	AI: Ai;
+	// Optional model overrides (plain vars) for when Cloudflare retires a model.
+	AI_ANALYSIS_MODEL?: string;
+	AI_TRANSLATION_MODEL?: string;
+	AI_COMPOSE_MODEL?: string;
 }

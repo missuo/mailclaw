@@ -20,10 +20,11 @@ CREATE TABLE IF NOT EXISTS emails (
     summary TEXT,
     summary_lang TEXT,
     translation TEXT,
-    translation_lang TEXT
+    translation_lang TEXT,
+    otp TEXT
 );
 
--- Single-tenant key/value preferences (one API token = one user).
+-- Single-tenant key/value preferences shared by all clients (one API token = one user).
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL,

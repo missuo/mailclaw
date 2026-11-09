@@ -1,10 +1,23 @@
 import { createId } from "@paralleldrive/cuid2";
 import PostalMime from "postal-mime";
-import { enrichEmail } from "@/ai/enrich";
-import { insertAttachment, insertEmail } from "@/database/d1";
+import { type Analysis, analyzeAndStore, translateAndStore } from "@/ai/enrich";
+import { type InsertEmailInput, insertAttachment, insertEmail } from "@/database/d1";
+import { getSettings } from "@/database/settings";
 import { pushNewEmail } from "@/push/apns";
+import { isHiddenInApp } from "@/utils/filter-rules";
 import { now } from "@/utils/helpers";
 import { processEmailContent } from "@/utils/mail";
+
+// How long the push waits for AI analysis (so it can show the OTP) before
+// going out without it. Analysis typically takes 2-3 s.
+const PUSH_WAIT_FOR_AI_MS = 8000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
+	return Promise.race([
+		promise,
+		new Promise<null>((resolve) => setTimeout(() => resolve(null), ms)),
+	]);
+}
 
 export async function handleEmail(
 	message: ForwardableEmailMessage,
@@ -23,7 +36,7 @@ export async function handleEmail(
 		const hasAttachments = (parsed.attachments?.length ?? 0) > 0;
 		const receivedAt = now();
 
-		const { success, error } = await insertEmail(env.D1, {
+		const email: InsertEmailInput = {
 			id: emailId,
 			from_address: message.from,
 			to_address: message.to,
@@ -46,7 +59,9 @@ export async function handleEmail(
 			summary_lang: null,
 			translation: null,
 			translation_lang: null,
-		});
+			otp: null,
+		};
+		const { success, error } = await insertEmail(env.D1, email);
 
 		if (!success) {
 			throw new Error(`Failed to insert email: ${error}`);
@@ -84,20 +99,31 @@ export async function handleEmail(
 			}
 		}
 
-		// Push after storage succeeds; failures are logged inside and never
-		// bubble up to the email handler.
-		ctx.waitUntil(
-			pushNewEmail(env, {
-				id: emailId,
-				from_address: message.from,
-				to_address: message.to,
-				subject: parsed.subject || null,
-			}),
-		);
+		// Everything below runs after storage succeeded and never fails ingestion.
+		const settings = await getSettings(env.D1);
+		if (isHiddenInApp(settings.filter_rules, email)) {
+			// Hidden in the app by an Include/Exclude rule: still stored and served
+			// by the API, but no AI spend and no push.
+			console.log(`Email ${emailId} filtered for app: ${message.from} → ${message.to}`);
+			return;
+		}
 
-		// Summary + translation are generated here so every client sees them
-		// immediately instead of each device paying the latency itself.
-		ctx.waitUntil(enrichEmail(env, emailId));
+		// Analysis (summary + OTP) gates the push so a verification code shows
+		// up in the notification; translation follows in the background.
+		const analysis: Promise<Analysis | null> = analyzeAndStore(env, email, settings);
+		ctx.waitUntil(
+			withTimeout(analysis, PUSH_WAIT_FOR_AI_MS).then((result) =>
+				pushNewEmail(env, {
+					id: emailId,
+					from_address: message.from,
+					to_address: message.to,
+					subject: parsed.subject || null,
+					otp: result?.otp ?? null,
+					summary: result?.summary ?? null,
+				}),
+			),
+		);
+		ctx.waitUntil(analysis.then((result) => translateAndStore(env, email, settings, result)));
 
 		console.log(
 			`Email ${emailId} stored: ${message.from} → ${message.to} (${attachments.length} attachment(s))`,

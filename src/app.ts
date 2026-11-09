@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { authMiddleware } from "@/middleware/auth";
+import aiRoutes from "@/routes/ai";
 import deviceRoutes from "@/routes/devices";
 import emailRoutes from "@/routes/emails";
 import healthRoutes from "@/routes/health";
@@ -11,12 +12,13 @@ const app = new Hono<{ Bindings: CloudflareBindings }>();
 // Health check (no auth)
 app.route("/", healthRoutes);
 
-// Auth middleware for all /api/emails and /api/devices routes
+// Auth middleware for every route except health
 app.use("/api/emails/*", authMiddleware);
 app.use("/api/emails", authMiddleware);
 app.use("/api/devices/*", authMiddleware);
 app.use("/api/devices", authMiddleware);
 app.use("/api/settings", authMiddleware);
+app.use("/api/ai/*", authMiddleware);
 
 // Email routes
 app.route("/", emailRoutes);
@@ -26,6 +28,9 @@ app.route("/", deviceRoutes);
 
 // User preference routes
 app.route("/", settingsRoutes);
+
+// AI completion for client features (compose etc.)
+app.route("/", aiRoutes);
 
 // 404
 app.notFound((c) => {

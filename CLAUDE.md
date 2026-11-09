@@ -31,6 +31,7 @@ Cloudflare Workers email inbox service with a Rust CLI. Receives emails via Emai
 - `bun run db:indexes` — Apply indexes (idempotent)
 - `bun run db:upgrade` — One-time v2 migration for pre-existing deployments (ALTERs; do not run twice)
 - `bun run db:upgrade-v3` — One-time v3 migration: AI enrichment columns + `settings` table
+- `bun run db:upgrade-v4` — One-time v4 migration: `otp` column
 
 ## Project Structure
 
@@ -43,7 +44,11 @@ src/                            # Cloudflare Worker (TypeScript)
 ├── version.ts                  # SERVER_VERSION + capability list
 ├── middleware/auth.ts          # Bearer token auth
 ├── ai/llm.ts                   # Server LLM client (chat/responses/messages)
-├── ai/enrich.ts                # Summary + translation generation at ingest
+├── ai/workers-ai.ts            # Workers AI wrapper (models, JSON + streaming)
+├── ai/enrich.ts                # Summary + OTP + translation at ingest
+├── ai/segments.ts              # HTML/text → translatable segments and back
+├── routes/ai.ts                # POST /api/ai/complete (client AI features)
+├── utils/filter-rules.ts       # App-only Include/Exclude rule matching
 ├── routes/emails.ts            # Email CRUD + PATCH + export + send + regenerate
 ├── routes/devices.ts           # APNs device token registration
 ├── routes/settings.ts          # User preferences (languages, auto-enrichment)
@@ -81,11 +86,12 @@ The full public contract (envelope, capabilities, delta sync, push payload) live
 - `GET /api/emails/:id/attachments/:attachmentId` — Download raw attachment bytes (not the JSON envelope)
 - `POST /api/emails/send` — Send email (Resend or Cloudflare provider); persists a `direction=outbound` copy; supports base64 `attachments` (≤25 MiB total)
 - `POST /api/emails/:id/summarize` / `POST /api/emails/:id/translate` — Regenerate AI enrichment (optional `{"language"}` override)
-- `GET /api/settings` / `PUT /api/settings` — User preferences (summary/translation/primary language, auto toggles)
+- `GET /api/settings` / `PUT /api/settings` — All synced app preferences (languages, AI toggles, signature, templates, identities, `filter_rules`)
+- `POST /api/ai/complete` — Generic completion for client AI features (JSON or SSE stream)
 - `POST /api/devices` / `DELETE /api/devices/:token` — APNs device token registration
 - `GET /api/health` — Health check (no auth); returns `version` + `capabilities`
 
-Inbound emails are enriched at ingest: a summary (and translation when `auto_translate` is on) is generated with the server's own LLM and stored on the row, so every client reads it instantly instead of calling an LLM itself. Configure with the `LLM_BASE_URL`/`LLM_API_KEY`/`LLM_MODEL`/`LLM_PROTOCOL` secrets; without them the `server-ai` capability is absent and clients fall back to their own keys. Enrichment writes never bump `updated_at` (delta-sync cursors stay stable).
+Inbound emails are enriched at ingest with Workers AI (`AI` binding, no keys): one call returns the summary, any one-time code (`otp`) and whether translation is needed; the push waits up to 8 s for it so OTPs show in the notification ("ChatGPT OTP: 770496"). Translation runs afterwards on text segments only. Emails hidden by the app's `filter_rules` get no AI and no push, but the API/dashboard still return them unfiltered. Enrichment writes bump `updated_at`. Models are overridable via `AI_ANALYSIS_MODEL` / `AI_TRANSLATION_MODEL` / `AI_COMPOSE_MODEL` vars. See API.md.
 
 A daily cron (03:00 UTC) purges Trash older than 30 days. Inbound emails trigger APNs pushes to registered devices when the `APNS_KEY`/`APNS_KEY_ID`/`APNS_TEAM_ID`/`APNS_TOPIC` secrets are set.
 
