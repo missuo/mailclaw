@@ -27,8 +27,10 @@ Cloudflare Workers email inbox service with a Rust CLI. Receives emails via Emai
 - `bun run cf-typegen` — Generate Cloudflare binding types
 - `bun run r2:create` — Create R2 attachment bucket
 - `bun run db:create` — Create D1 database
-- `bun run db:tables` — Apply schema (idempotent; also adds the `attachments` table)
-- `bun run db:indexes` — Apply indexes
+- `bun run db:tables` — Apply schema (idempotent; fresh installs get all tables incl. `devices`)
+- `bun run db:indexes` — Apply indexes (idempotent)
+- `bun run db:upgrade` — One-time v2 migration for pre-existing deployments (ALTERs; do not run twice)
+- `bun run db:upgrade-v3` — One-time v3 migration: AI enrichment columns + `settings` table
 
 ## Project Structure
 
@@ -38,11 +40,18 @@ src/                            # Cloudflare Worker (TypeScript)
 ├── app.ts                      # Hono app setup, middleware, routes
 ├── env.d.ts                    # CloudflareBindings secret extensions
 ├── types.ts                    # TypeScript types
+├── version.ts                  # SERVER_VERSION + capability list
 ├── middleware/auth.ts          # Bearer token auth
-├── routes/emails.ts            # Email CRUD + export + send endpoints
-├── routes/health.ts            # Health check
+├── ai/llm.ts                   # Server LLM client (chat/responses/messages)
+├── ai/enrich.ts                # Summary + translation generation at ingest
+├── routes/emails.ts            # Email CRUD + PATCH + export + send + regenerate
+├── routes/devices.ts           # APNs device token registration
+├── routes/settings.ts          # User preferences (languages, auto-enrichment)
+├── routes/health.ts            # Health check (version + capabilities)
 ├── database/d1.ts              # All D1 query functions
-├── handlers/email.ts           # Email Routing handler (parse + store)
+├── database/settings.ts        # Preferences key/value store
+├── handlers/email.ts           # Email Routing handler (parse + store + push)
+├── push/apns.ts                # APNs push (ES256 JWT; no-op without APNS_* secrets)
 ├── providers/                  # Email send providers
 │   ├── types.ts                # EmailProvider interface
 │   ├── resend.ts               # Resend API provider
@@ -61,20 +70,30 @@ install.sh                      # Cross-platform CLI install script
 
 ## API Endpoints
 
-All `/api/emails*` routes require `Authorization: Bearer <token>`.
+The full public contract (envelope, capabilities, delta sync, push payload) lives in `API.md` — keep it in sync with any API change. All `/api/emails*` and `/api/devices*` routes require `Authorization: Bearer <token>`.
 
 - `GET /api/emails` — List (metadata only, paginated)
 - `GET /api/emails/export` — List with full content (paginated)
 - `GET /api/emails/:id` — Single email detail (includes `attachments` metadata)
-- `DELETE /api/emails/:id` — Delete email (and its R2 attachments)
+- `PATCH /api/emails/:id` — Update flags: `read`, `starred`, `archived`, `deleted` (trash/restore)
+- `DELETE /api/emails/:id` — Soft delete to Trash; `?permanent=true` hard-deletes (incl. R2 attachments)
 - `GET /api/emails/:id/attachments` — List attachment metadata
 - `GET /api/emails/:id/attachments/:attachmentId` — Download raw attachment bytes (not the JSON envelope)
-- `POST /api/emails/send` — Send email (via Resend or Cloudflare provider)
-- `GET /api/health` — Health check (no auth)
+- `POST /api/emails/send` — Send email (Resend or Cloudflare provider); persists a `direction=outbound` copy; supports base64 `attachments` (≤25 MiB total)
+- `POST /api/emails/:id/summarize` / `POST /api/emails/:id/translate` — Regenerate AI enrichment (optional `{"language"}` override)
+- `GET /api/settings` / `PUT /api/settings` — User preferences (summary/translation/primary language, auto toggles)
+- `POST /api/devices` / `DELETE /api/devices/:token` — APNs device token registration
+- `GET /api/health` — Health check (no auth); returns `version` + `capabilities`
+
+Inbound emails are enriched at ingest: a summary (and translation when `auto_translate` is on) is generated with the server's own LLM and stored on the row, so every client reads it instantly instead of calling an LLM itself. Configure with the `LLM_BASE_URL`/`LLM_API_KEY`/`LLM_MODEL`/`LLM_PROTOCOL` secrets; without them the `server-ai` capability is absent and clients fall back to their own keys. Enrichment writes never bump `updated_at` (delta-sync cursors stay stable).
+
+A daily cron (03:00 UTC) purges Trash older than 30 days. Inbound emails trigger APNs pushes to registered devices when the `APNS_KEY`/`APNS_KEY_ID`/`APNS_TEAM_ID`/`APNS_TOPIC` secrets are set.
 
 ### Filter params (for list + export)
 
-`from`, `to`, `q` (keyword), `after`, `before` (date), `limit`, `offset`
+`from`, `to`, `q` (all substring/keyword match), `after`, `before` (date), `limit`, `offset`, `mailbox` (`inbox`/`sent`/`archive`/`trash`/`starred`/`all`; default hides Trash), `updated_after` (delta-sync cursor; includes tombstones, ordered by `updated_at` ASC)
+
+`from`, `to`, and `q` all match by substring (SQL `LIKE %value%`), so `to=me.edu.ge` matches `hi@me.edu.ge` (by domain), and `from=acme` matches any sender containing `acme`.
 
 ## CLI
 
