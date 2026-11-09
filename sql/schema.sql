@@ -16,7 +16,18 @@ CREATE TABLE IF NOT EXISTS emails (
     starred BOOLEAN DEFAULT FALSE,
     archived BOOLEAN DEFAULT FALSE,
     deleted_at INTEGER,
-    updated_at INTEGER NOT NULL DEFAULT 0
+    updated_at INTEGER NOT NULL DEFAULT 0,
+    summary TEXT,
+    summary_lang TEXT,
+    translation TEXT,
+    translation_lang TEXT
+);
+
+-- Single-tenant key/value preferences (one API token = one user).
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS attachments (

@@ -12,4 +12,10 @@ interface CloudflareBindings {
 	APNS_KEY_ID?: string;
 	APNS_TEAM_ID?: string;
 	APNS_TOPIC?: string; // the app's bundle id
+	// Server-side AI enrichment (summary + translation at ingest).
+	// Enrichment is skipped unless BASE_URL, API_KEY and MODEL are all set.
+	LLM_BASE_URL?: string;
+	LLM_API_KEY?: string;
+	LLM_MODEL?: string;
+	LLM_PROTOCOL?: string; // "chat" | "responses" | "messages" — defaults to "chat"
 }

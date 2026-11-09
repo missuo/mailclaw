@@ -19,6 +19,11 @@ export interface Email {
 	archived: boolean;
 	deleted_at: number | null;
 	updated_at: number;
+	// AI enrichment generated server-side at ingest (null until it lands).
+	summary: string | null;
+	summary_lang: string | null;
+	translation: string | null;
+	translation_lang: string | null;
 	// Populated only on the single-email detail endpoint.
 	attachments?: AttachmentSummary[];
 }

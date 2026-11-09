@@ -1,6 +1,9 @@
 import { createId } from "@paralleldrive/cuid2";
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
+import { generateSummary, generateTranslation } from "@/ai/enrich";
+import { getLLMConfig } from "@/ai/llm";
 import * as db from "@/database/d1";
+import { getSettings } from "@/database/settings";
 import { createEmailProvider } from "@/providers";
 import type { EmailFilters, EmailPatch, Mailbox, SendEmailRequest } from "@/types";
 import { base64ToUint8Array, now, parseTimestamp } from "@/utils/helpers";
@@ -163,6 +166,55 @@ emails.delete("/api/emails/:id", async (c) => {
 	return c.json(OK({ message: "Email deleted" }));
 });
 
+// Regenerate the AI summary for an email (e.g. after a language change)
+emails.post("/api/emails/:id/summarize", async (c) => {
+	return regenerate(c, "summary");
+});
+
+// Regenerate the AI translation for an email
+emails.post("/api/emails/:id/translate", async (c) => {
+	return regenerate(c, "translation");
+});
+
+// Shared implementation for the two regenerate endpoints. `language` may be
+// overridden per request; otherwise the stored preference is used.
+async function regenerate(
+	c: Context<{ Bindings: CloudflareBindings }>,
+	kind: "summary" | "translation",
+) {
+	if (!getLLMConfig(c.env)) {
+		return c.json(ERR("AI_NOT_CONFIGURED", "Server-side AI is not configured"), 501);
+	}
+
+	const emailId = c.req.param("id") ?? "";
+	const { email, error } = await db.getEmailById(c.env.D1, emailId);
+	if (error) return c.json(ERR("D1_ERROR", error.message), 500);
+	if (!email) return c.json(ERR("NOT_FOUND", "Email not found"), 404);
+
+	const body = await c.req.json<{ language?: string }>().catch(() => ({}) as { language?: string });
+	const settings = await getSettings(c.env.D1);
+	const language =
+		body.language ||
+		(kind === "summary" ? settings.summary_language : settings.translation_language);
+
+	try {
+		if (kind === "summary") {
+			const summary = await generateSummary(c.env, email, language);
+			if (!summary) return c.json(ERR("AI_FAILED", "No summary produced"), 502);
+			await db.updateSummary(c.env.D1, emailId, summary, language);
+			return c.json(OK({ summary, summary_lang: language }));
+		}
+
+		const translation = await generateTranslation(c.env, email, language);
+		if (!translation) return c.json(ERR("AI_FAILED", "No translation produced"), 502);
+		await db.updateTranslation(c.env.D1, emailId, translation, language);
+		return c.json(OK({ translation, translation_lang: language }));
+	} catch (err) {
+		const message = err instanceof Error ? err.message : "AI request failed";
+		return c.json(ERR("AI_FAILED", message), 502);
+	}
+}
+
 // Send email
 emails.post("/api/emails/send", async (c) => {
 	let body: SendEmailRequest;
@@ -244,6 +296,10 @@ emails.post("/api/emails/send", async (c) => {
 			archived: false,
 			deleted_at: null,
 			updated_at: timestamp,
+			summary: null,
+			summary_lang: null,
+			translation: null,
+			translation_lang: null,
 		});
 		if (!success) throw error ?? new Error("insert failed");
 

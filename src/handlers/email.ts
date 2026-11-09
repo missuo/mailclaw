@@ -1,5 +1,6 @@
 import { createId } from "@paralleldrive/cuid2";
 import PostalMime from "postal-mime";
+import { enrichEmail } from "@/ai/enrich";
 import { insertAttachment, insertEmail } from "@/database/d1";
 import { pushNewEmail } from "@/push/apns";
 import { now } from "@/utils/helpers";
@@ -41,6 +42,10 @@ export async function handleEmail(
 			archived: false,
 			deleted_at: null,
 			updated_at: receivedAt,
+			summary: null,
+			summary_lang: null,
+			translation: null,
+			translation_lang: null,
 		});
 
 		if (!success) {
@@ -89,6 +94,10 @@ export async function handleEmail(
 				subject: parsed.subject || null,
 			}),
 		);
+
+		// Summary + translation are generated here so every client sees them
+		// immediately instead of each device paying the latency itself.
+		ctx.waitUntil(enrichEmail(env, emailId));
 
 		console.log(
 			`Email ${emailId} stored: ${message.from} → ${message.to} (${attachments.length} attachment(s))`,

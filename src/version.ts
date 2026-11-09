@@ -1,3 +1,5 @@
+import { getLLMConfig } from "@/ai/llm";
+
 // Server version + capability list, exposed on /api/health so clients can
 // negotiate features. Bump the version on every release; capabilities are
 // additive within a major version (see API.md).
@@ -12,9 +14,14 @@ export function getCapabilities(env: CloudflareBindings): string[] {
 		"delta-sync",
 		"send-attachments",
 		"devices",
+		"settings",
 	];
 	if (env.APNS_KEY && env.APNS_KEY_ID && env.APNS_TEAM_ID && env.APNS_TOPIC) {
 		capabilities.push("push");
+	}
+	// Summaries and translations are generated at ingest and served from D1.
+	if (getLLMConfig(env)) {
+		capabilities.push("server-ai");
 	}
 	return capabilities;
 }
