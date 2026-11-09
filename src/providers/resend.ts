@@ -26,6 +26,15 @@ export class ResendProvider implements EmailProvider {
 			body.reply_to = Array.isArray(request.reply_to) ? request.reply_to : [request.reply_to];
 		}
 		if (request.headers) body.headers = request.headers;
+		if (request.attachments && request.attachments.length > 0) {
+			// Resend takes base64 content directly, so pass it through.
+			body.attachments = request.attachments.map((attachment) => ({
+				filename: attachment.filename,
+				content: attachment.content,
+				content_type: attachment.type,
+				...(attachment.content_id ? { content_id: attachment.content_id } : {}),
+			}));
+		}
 		if (request.tags) body.tags = request.tags;
 		if (request.scheduled_at) body.scheduled_at = request.scheduled_at;
 

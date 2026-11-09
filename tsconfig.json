@@ -14,5 +14,6 @@
       "./worker-configuration.d.ts",
       "node"
     ]
-  }
+  },
+  "include": ["src"]
 }

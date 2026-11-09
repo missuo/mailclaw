@@ -7,4 +7,9 @@ interface CloudflareBindings {
 	RESEND_API_KEY?: string;
 	EMAIL_PROVIDER?: string; // "resend" | "cloudflare" — defaults to "resend"
 	ATTACHMENTS: R2Bucket;
+	// APNs push secrets — push is disabled until all four are set.
+	APNS_KEY?: string; // contents of the .p8 AuthKey (PEM)
+	APNS_KEY_ID?: string;
+	APNS_TEAM_ID?: string;
+	APNS_TOPIC?: string; // the app's bundle id
 }
